@@ -1,0 +1,16 @@
+.DS_Store
+.eslintcache
+.python-version
+.vscode
+backend
+dist
+frontend.zip
+node_modules/*
+npm-debug.log*
+detect/node_modules
+getAttendanceList/node_modules
+web-ui/node_modules
+web-ui/build
+web-ui/dist
+cfn/.aws-sam
+templates

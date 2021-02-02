@@ -1,0 +1,1 @@
+window.rekognitionSettings = {"apiGateway":"","cognitoIdentityPool":"","cognitoUserPoolId":"","cognitoUserPoolClientId":"","region":"ap-southeast-1"};

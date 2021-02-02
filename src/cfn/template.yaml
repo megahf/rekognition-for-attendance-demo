@@ -1,0 +1,331 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This template deploys the Amazon Rekognition demo for student or employee attendance
+Transform: AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    Runtime: nodejs12.x
+    MemorySize: 128
+    Timeout: 120
+    Environment:
+      Variables:
+        REGION: !Ref AWS::Region
+        TOPIC_ARN: !Ref TopicArn
+        VERSION: "0.18"
+
+  Api:
+    EndpointConfiguration: REGIONAL
+    Cors:
+      AllowMethods: "'*'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"
+    Auth:
+      DefaultAuthorizer: CognitoAuthorizer
+      Authorizers:
+        CognitoAuthorizer:
+          UserPoolArn: !GetAtt CognitoUserPool.Arn
+      AddDefaultAuthorizerToCorsPreflight: False
+    GatewayResponses:
+      DEFAULT_4XX:
+        ResponseTemplates:
+          "application/json": '{ "Message": $context.error.messageString }'
+        ResponseParameters:
+          Headers:
+            Access-Control-Allow-Methods: "'*'"
+            Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            Access-Control-Allow-Origin: "'*'"
+      DEFAULT_5XX:
+        ResponseTemplates:
+          "application/json": '{ "Message": $context.error.messageString }'
+        ResponseParameters:
+          Headers:
+            Access-Control-Allow-Methods: "'*'"
+            Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            Access-Control-Allow-Origin: "'*'"
+      BAD_REQUEST_BODY:
+        StatusCode: 422
+        ResponseTemplates:
+          "application/json": '{ "Message": $context.error.messageString }'
+        ResponseParameters:
+          Headers:
+            Access-Control-Allow-Methods: "'*'"
+            Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            Access-Control-Allow-Origin: "'*'"
+      BAD_REQUEST_PARAMETERS:
+        StatusCode: 422
+        ResponseTemplates:
+          "application/json": '{ "Message": $context.error.messageString }'
+        ResponseParameters:
+          Headers:
+            Access-Control-Allow-Methods: "'*'"
+            Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            Access-Control-Allow-Origin: "'*'"
+
+Parameters:
+  AdminEmail:
+    Description: Creates a username to be used for Authentication. It needs to be an e-mail address.
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$
+  ResourcePrefix:
+    Description: AWS Resources are named based on the value of this parameter. You must customise this if you are launching more than one instance of the stack within the same account.
+    Type: String
+    Default: AttendanceDemo
+    AllowedPattern: ^[a-zA-Z0-9_]*$
+  CreateCloudFrontDistribution:
+    Description: Creates a CloudFront distribution for accessing the web interface of the demo. This must be enabled if S3 Block Public Access is enabled at an account level.
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+  TopicArn:
+    Description: When an SNS Topic Arn is provided,  SNS notifications will be sent for each body part detected. The SNS Topic and the Demo need to be located in the same AWS Region.
+    Type: String
+    Default: "false"
+
+Conditions:
+  WithCloudFront: !Equals [!Ref CreateCloudFrontDistribution, "true"]
+  WithSNS: !Not [!Equals [!Ref TopicArn, "false"]]
+
+Outputs:
+  api:
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+    Description: Demo API
+  url:
+    Value: !If
+      - WithCloudFront
+      - !Sub "https://${CloudFrontDistribution.DomainName}"
+      - !Sub "https://${WebUIBucket.RegionalDomainName}/index.html"
+    Description: Demo URL
+  uiBucket:
+    Value: !Ref WebUIBucket
+  cognitoIdentityPool:
+    Value: !Ref CognitoIdentityPool
+  cognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  cognitoUserPoolClientId:
+    Value: !Ref CognitoUserPoolClient
+  
+
+Resources:
+  WebUIBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET]
+            AllowedOrigins: ["*"]
+            Id: RekogCorsRule
+            MaxAge: 3600
+
+  WebUIBucketReadPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: WithCloudFront
+    Properties:
+      Bucket: !Ref WebUIBucket
+      PolicyDocument:
+        Statement:
+          - Action: s3:GetObject
+            Effect: Allow
+            Resource: !Sub arn:aws:s3:::${WebUIBucket}/*
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub RekogIdentityPool${ResourcePrefix}
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoIdentityPoolRole:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt ApiGatewayInvokeRole.Arn
+        unauthenticated: !GetAtt ApiGatewayInvokeRole.Arn
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${ResourcePrefix}RekogUsersPool
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailMessage: !Sub
+            - 'Your Amazon Rekognition Attendance Demo username is {username} and the temporary password is {####}<br><br>Click here to access the web interface: <a href="${UIUrl}">${UIUrl}</a>'
+            - {
+                UIUrl:
+                  !If [
+                    WithCloudFront,
+                    !Sub "https://${CloudFrontDistribution.DomainName}",
+                    !Sub "https://${WebUIBucket.RegionalDomainName}/index.html",
+                  ],
+              }
+          EmailSubject: "Your temporary password for Amazon Rekognition Attendance Demo"
+          SMSMessage: "Your Amazon Rekognition Attendance Demo username is {username} and the temporary password is {####}"
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientName: !Sub ${ResourcePrefix}RekogUsersPoolClient
+      GenerateSecret: false
+      RefreshTokenValidity: 1
+
+  CognitoUserPoolUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      Username: !Ref AdminEmail
+      UserPoolId: !Ref CognitoUserPool
+      DesiredDeliveryMediums:
+        - EMAIL
+      UserAttributes:
+        - Name: email
+          Value: !Ref AdminEmail
+        - Name: email_verified
+          Value: "true"
+
+  ApiGatewayInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                - cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+      Path: "/"
+      Policies:
+        - PolicyName: WebServiceExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: rekognition:DetectProtectiveEquipment
+                Resource: "*"
+
+  # Lambdas
+
+  ProcessImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.processHandler
+      CodeUri: ../functions/detect/
+      Events:
+        Get:
+          Type: Api
+          Properties:
+            Path: /process
+            Method: post
+      Policies:
+        - RekognitionDetectOnlyPolicy: {}
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:SearchFacesByImage
+              Resource: !Sub arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:collection/attendeesCollection
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AttendanceTable}
+            - !If
+              - WithSNS
+              - Effect: Allow
+                Resource: !Ref TopicArn
+                Action: sns:Publish
+              - !Ref AWS::NoValue
+      Environment:
+        Variables:
+          ATTENDANCE_TABLE: !Ref AttendanceTable
+    
+  GetAttendanceListFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: ../functions/getAttendanceList/
+      Events:
+        Get:
+          Type: Api
+          Properties:
+            Path: /getAttendanceList
+            Method: get
+      Policies:
+        - RekognitionDetectOnlyPolicy: {}
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AttendanceTable}
+      Environment:
+        Variables:
+          ATTENDANCE_TABLE: !Ref AttendanceTable
+
+  AttendanceTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: name
+        Type: String
+      TableName: attendance-table
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Condition: WithCloudFront
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Ref WebUIBucket
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: WithCloudFront
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt WebUIBucket.RegionalDomainName
+            Id: !Sub myS3Origin-${ResourcePrefix}
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}
+        Enabled: true
+        HttpVersion: http2
+        Comment: The Distribution for the Rekognition Meter Web UI
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - HEAD
+            - GET
+            - OPTIONS
+          TargetOriginId: !Sub myS3Origin-${ResourcePrefix}
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
