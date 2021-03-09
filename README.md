@@ -1,6 +1,8 @@
 # Facial Recognition for Employee / Student Attendance
 
-This is a demo app to show how Amazon Rekognition and AWS services can be used to build an app that can use facial recognition to register student or employee attendance. This code is for demo purpose only and not for production.
+**This code is for demo purpose only and not for production.**
+
+This is a demo app to show how Amazon Rekognition and AWS services can be used to build an app that can use facial recognition to register student or employee attendance. 
 
 This web-app is modified from https://github.com/aws-samples/amazon-rekognition-ppe/. It uses AWS SAM (serverless application model) to build the backend API and the frontend uses reactJs that will be hosted on Amazon S3 and CloudFront.
 
@@ -38,7 +40,7 @@ sam deploy --template-file template.yaml --s3-bucket <YOUR-SAM-BUCKET> --capabil
 # sam deploy --template-file template.yaml --s3-bucket attendance-demo-sam-1j2hjkl --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --stack-name attendance-demo --parameter-overrides AdminEmail=myemail@myemail.com
 ```
 
-4. Take note of the stack outputs e.g. uiBucket, cognito details, etc
+4. :bangbang: **Take note of the stack outputs e.g. uiBucket, apiGateway, and cognito details** :bangbang:
 
 ### Deploy frontend
 
@@ -48,7 +50,7 @@ cd src/web-ui
 npm install
 ```
 
-2. Edit the file public/settings.js with the values from backend stack outputs.
+2. :bangbang: Edit the file **public/settings.js** with the values from backend stack outputs (step 4 of section **Deploy backend**) :bangbang:
 
 3. Build the frontend files
 ```
